@@ -18,6 +18,10 @@ DEBUG = os.environ.get("DEBUG", "True") == "True"
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://nova-ai-backend-ogch.onrender.com",
+]
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -115,7 +119,7 @@ SIMPLE_JWT = {
 
 # --- CORS ---
 CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if not DEBUG else []
+CORS_ALLOW_ALL_ORIGINS = True
 
 # --- OpenAI ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")

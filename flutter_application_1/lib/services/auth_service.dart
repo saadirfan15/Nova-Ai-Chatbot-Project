@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import 'token_storage.dart';
@@ -36,22 +37,58 @@ class AuthService {
     required String username,
     required String password,
   }) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/auth/login/'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username, 'password': password}),
-    );
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      await TokenStorage.saveTokens(
-        accessToken: data['access'],
-        refreshToken: data['refresh'],
+    try {
+      final result = await InternetAddress.lookup(
+        'nova-ai-backend-ogch.onrender.com',
       );
-      return data;
+      print("DNS RESULT: $result");
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/auth/login/'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'username': username, 'password': password}),
+      );
+
+      print("STATUS CODE: ${response.statusCode}");
+      print("BODY: ${response.body}");
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await TokenStorage.saveTokens(
+          accessToken: data['access'],
+          refreshToken: data['refresh'],
+        );
+        return data;
+      }
+
+      throw Exception(data['detail'] ?? data['message'] ?? 'Login failed');
+    } catch (e, st) {
+      print("ERROR: $e");
+      print(st);
+      rethrow;
     }
-    throw Exception(data['detail'] ?? data['message'] ?? 'Login failed');
   }
+  // Future<Map<String, dynamic>> login({
+  //   required String username,
+  //   required String password,
+  // }) async {
+  //   final response = await http.post(
+  //     Uri.parse('$_baseUrl/auth/login/'),
+  //     headers: {'Content-Type': 'application/json'},
+  //     body: jsonEncode({'username': username, 'password': password}),
+  //   );
+
+  //   final data = jsonDecode(response.body) as Map<String, dynamic>;
+  //   if (response.statusCode >= 200 && response.statusCode < 300) {
+  //     await TokenStorage.saveTokens(
+  //       accessToken: data['access'],
+  //       refreshToken: data['refresh'],
+  //     );
+  //     return data;
+  //   }
+  //   throw Exception(data['detail'] ?? data['message'] ?? 'Login failed');
+  // }
 
   Future<String?> refreshToken() async {
     final refresh = await TokenStorage.getRefreshToken();
