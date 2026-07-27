@@ -246,11 +246,9 @@ assets/screenshots/register.png
 
 **Saad Irfan**
 
-GitHub:
-https://github.com/saadirfan15
+GitHub: https://github.com/saadirfan15
 
-LinkedIn:
-(Add your LinkedIn profile)
+LinkedIn: in/saad-irfan-9b5205304
 
 ---
 
