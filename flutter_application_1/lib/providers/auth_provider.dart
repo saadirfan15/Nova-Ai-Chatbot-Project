@@ -72,6 +72,7 @@ class AuthProvider with ChangeNotifier {
     } catch (e) {
       _errorMessage = e.toString();
       _isAuthenticated = false;
+      print(e.toString());
     } finally {
       _isLoading = false;
       notifyListeners();

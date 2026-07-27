@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../utils/dns_safe_client.dart';
 import 'token_storage.dart';
+import 'package:http/http.dart' as http;
 
 class AuthService {
   static const _baseUrl = ApiConfig.baseUrl;
@@ -12,11 +12,17 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    final client = DnsSafeHttp.buildClient();
+    // final client = DnsSafeHttp.buildClient();
+
+    final client = http.Client();
     try {
       final response = await client.post(
         Uri.parse('$_baseUrl/auth/register/'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+
         body: jsonEncode({
           'username': username,
           'email': email,
@@ -25,6 +31,7 @@ class AuthService {
       );
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+
       if (response.statusCode >= 200 && response.statusCode < 300) {
         await TokenStorage.saveTokens(
           accessToken: data['access'],
@@ -44,7 +51,9 @@ class AuthService {
     required String username,
     required String password,
   }) async {
-    final client = DnsSafeHttp.buildClient();
+    // final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.post(
         Uri.parse('$_baseUrl/auth/login/'),
@@ -79,7 +88,9 @@ class AuthService {
     final refresh = await TokenStorage.getRefreshToken();
     if (refresh == null) return null;
 
-    final client = DnsSafeHttp.buildClient();
+    // final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.post(
         Uri.parse('$_baseUrl/auth/refresh/'),
@@ -108,7 +119,9 @@ class AuthService {
     final token = await TokenStorage.getAccessToken();
     if (token == null) return null;
 
-    final client = DnsSafeHttp.buildClient();
+    // final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.get(
         Uri.parse('$_baseUrl/auth/me/'),

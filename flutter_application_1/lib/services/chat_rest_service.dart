@@ -1,3 +1,4 @@
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
 import '../models/conversation.dart';
@@ -14,7 +15,8 @@ class ChatRestService {
       '$_baseUrl/chat/conversations/',
     ];
 
-    final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       for (final endpoint in endpoints) {
         final response = await client.post(
@@ -49,7 +51,8 @@ class ChatRestService {
 
   Future<List<Conversation>> fetchConversations() async {
     final token = await TokenStorage.getAccessToken();
-    final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.get(
         Uri.parse('$_baseUrl/chat/conversations/'),
@@ -81,7 +84,8 @@ class ChatRestService {
 
   Future<Conversation> fetchConversation(String id) async {
     final token = await TokenStorage.getAccessToken();
-    final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.get(
         Uri.parse('$_baseUrl/chat/conversations/$id/'),
@@ -99,7 +103,8 @@ class ChatRestService {
 
   Future<void> deleteConversation(String id) async {
     final token = await TokenStorage.getAccessToken();
-    final client = DnsSafeHttp.buildClient();
+    final client = http.Client();
+
     try {
       final response = await client.delete(
         Uri.parse('$_baseUrl/chat/conversations/$id/'),

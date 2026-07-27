@@ -161,6 +161,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submitRegister() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    print("HI");
     await context.read<AuthProvider>().register(
       username: _usernameController.text.trim(),
       email: _emailController.text.trim(),
