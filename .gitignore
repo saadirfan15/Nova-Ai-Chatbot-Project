@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.venv/
+db.sqlite3
+*.log
+media/
+.env
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+android/app/debug
+android/app/profile
+android/app/release
+
+# IDE
+.vscode/
+.idea/
