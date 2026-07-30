@@ -45,6 +45,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.13.1
+  speech_to_text: ^7.0.0
 
 flutter_launcher_icons:
   android: true
@@ -101,3 +102,4 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+  
