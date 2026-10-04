@@ -1,0 +1,37 @@
+services:
+  # Django + Channels backend (Daphne serves HTTP and WebSockets).
+  - type: web
+    name: nova-ai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py migrate --noinput && daphne -b 0.0.0.0 -p $PORT config.asgi:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "*"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.groq.com/openai/v1
+
+  # Flutter web frontend (static site; Flutter is fetched during the build).
+  - type: web
+    name: nova-ai-frontend
+    runtime: static
+    rootDir: flutter_application_1
+    buildCommand: git clone https://github.com/flutter/flutter.git -b stable --depth 1 && flutter/bin/flutter config --enable-web && flutter/bin/flutter pub get && flutter/bin/flutter build web --release ${API_HOST:+--dart-define=API_HOST=$API_HOST}
+    staticPublishPath: build/web
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: API_HOST
+        sync: false
