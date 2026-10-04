@@ -23,3 +23,5 @@ android/app/release
 # IDE
 .vscode/
 .idea/
+# Local design drafts and screenshots (README images live in docs/screenshots)
+design/
