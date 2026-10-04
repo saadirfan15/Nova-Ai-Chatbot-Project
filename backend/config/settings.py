@@ -4,7 +4,6 @@ Django settings for AI Chatbot backend.
 import os
 from pathlib import Path
 from datetime import timedelta
-import os
 
 from dotenv import load_dotenv
 
@@ -14,15 +13,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key-change-in-production")
 
-DEBUG = os.environ.get("DEBUG", "True") == "True"
+DEBUG = os.environ.get("DEBUG", "False") == "True"
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://nova-ai-backend-ogch.onrender.com",
+    origin
+    for origin in os.environ.get(
+        "CSRF_TRUSTED_ORIGINS",
+        "https://nova-ai-backend-ogch.onrender.com,"
+        "https://nova-ai-chatbot-project-production.up.railway.app",
+    ).split(",")
+    if origin
 ]
 
 INSTALLED_APPS = [
+    # Must come first so `manage.py runserver` serves ASGI (WebSockets).
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -77,7 +84,7 @@ DATABASES = {
     }
 }
 
-# --- Channels layer (Redis) ---
+# --- Channels layer (in-memory; single process only) ---
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
@@ -99,6 +106,10 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+
+# Uploaded attachments (served only through the authenticated API, never
+# as public media URLs).
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- DRF ---
@@ -118,11 +129,23 @@ SIMPLE_JWT = {
 }
 
 # --- CORS ---
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOW_ALL_ORIGINS = True
+# Auth is a Bearer token (no cookies), so allowing all origins is the default.
+# Set CORS_ALLOWED_ORIGINS (comma-separated) to restrict it.
+CORS_ALLOWED_ORIGINS = [
+    origin for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if origin
+]
+CORS_ALLOW_ALL_ORIGINS = not CORS_ALLOWED_ORIGINS
 
-# --- OpenAI ---
+# --- LLM (any OpenAI-compatible API; Groq by default) ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.groq.com/openai/v1")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "openai/gpt-oss-120b")
+# Used instead of OPENAI_MODEL for turns that include images.
+OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "qwen/qwen3.8-27b")
 
-"""print("API KEY:", repr(OPENAI_API_KEY))"""
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {"apps": {"handlers": ["console"], "level": "INFO"}},
+}

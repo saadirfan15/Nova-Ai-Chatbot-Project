@@ -64,7 +64,68 @@ class FakeConversationIdChatRestService extends ChatRestService {
   }
 }
 
+class FakeServerTitleRestService extends ChatRestService {
+  @override
+  Future<Conversation> createConversation() async {
+    return Conversation.fromJson({
+      'id': 'conv-4',
+      // Older backends used this capitalisation for the default title.
+      'title': 'New Chat',
+      'created_at': '2024-01-01T00:00:00.000Z',
+      'updated_at': '2024-01-01T00:00:00.000Z',
+      'messages': const [],
+    });
+  }
+}
+
 void main() {
+  test(
+    'local title is generated even if backend default is "New Chat"',
+    () async {
+      final provider = ChatProvider(restService: FakeServerTitleRestService());
+      await provider.createNewConversation();
+
+      provider.setConversationTitleFromPrompt(
+        'Explain quantum computing simply',
+      );
+
+      expect(
+        provider.activeConversation!.title,
+        'Explain quantum computing simply',
+      );
+      expect(
+        provider.conversations.single.title,
+        'Explain quantum computing simply',
+      );
+    },
+  );
+
+  test('stopStreaming is a no-op when nothing is streaming', () async {
+    final provider = ChatProvider(restService: FakeChatRestService());
+    await provider.createNewConversation();
+    var notified = 0;
+    provider.addListener(() => notified++);
+
+    provider.stopStreaming();
+
+    expect(provider.isStreaming, isFalse);
+    expect(notified, 0);
+    expect(provider.activeConversation!.messages, hasLength(1));
+  });
+
+  test('reset clears every per-user piece of state', () async {
+    final provider = ChatProvider(restService: FakeChatRestService());
+    await provider.createNewConversation();
+    provider.setDraft('half typed');
+
+    provider.reset();
+
+    expect(provider.activeConversation, isNull);
+    expect(provider.conversations, isEmpty);
+    expect(provider.draft, isEmpty);
+    expect(provider.isStreaming, isFalse);
+  });
+
   test(
     'createNewConversation loads the backend greeting into the active conversation once',
     () async {

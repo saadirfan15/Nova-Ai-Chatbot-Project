@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 
 class AuthProvider with ChangeNotifier {
-  final AuthService _authService = AuthService();
+  AuthProvider({AuthService? authService})
+    : _authService = authService ?? AuthService();
+
+  final AuthService _authService;
 
   bool _isLoading = false;
   bool _isAuthenticated = false;
@@ -20,6 +23,7 @@ class AuthProvider with ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
+    // getCurrentUser refreshes an expired access token automatically.
     final user = await _authService.getCurrentUser();
     _isAuthenticated = user != null;
     _user = user;
@@ -41,11 +45,12 @@ class AuthProvider with ChangeNotifier {
         password: password,
       );
       _accessToken = data['access']?.toString();
-      _user = data['user'];
+      // The login endpoint only returns tokens, so fetch the profile.
+      _user = await _authService.getCurrentUser() ?? {'username': username};
       _isAuthenticated = true;
       _errorMessage = null;
     } catch (e) {
-      _errorMessage = e.toString();
+      _errorMessage = _readable(e);
       _isAuthenticated = false;
     } finally {
       _isLoading = false;
@@ -70,9 +75,8 @@ class AuthProvider with ChangeNotifier {
       _isAuthenticated = true;
       _errorMessage = null;
     } catch (e) {
-      _errorMessage = e.toString();
+      _errorMessage = _readable(e);
       _isAuthenticated = false;
-      print(e.toString());
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -93,4 +97,7 @@ class AuthProvider with ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
   }
+
+  static String _readable(Object error) =>
+      error.toString().replaceFirst('Exception: ', '');
 }

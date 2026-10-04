@@ -1,13 +1,18 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/conversation.dart';
+import '../models/message.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
+import '../widgets/aurora_effects.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/conversation_drawer.dart';
 import '../widgets/message_bubble.dart';
-import 'package:flutter/services.dart';
+
+const _desktopBreakpoint = 1050.0;
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -17,18 +22,24 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   bool _hasInitialized = false;
+  bool _dragging = false;
+  late final ChatProvider _chat;
+  String? _lastShownError;
 
   @override
   void initState() {
     super.initState();
+    _chat = context.read<ChatProvider>();
+    _chat.addListener(_showChatError);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
-      final chat = context.read<ChatProvider>();
+      final chat = _chat;
 
       if (chat.conversations.isEmpty) {
         chat.loadConversations();
@@ -41,42 +52,34 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // @override
-  // void initState() {
-  //   super.initState();
-  //   WidgetsBinding.instance.addPostFrameCallback((_) {
-  //     final chat = context.read<ChatProvider>();
-  //     chat.loadConversations();
-  //     if (chat.activeConversation == null && !_hasInitialized) {
-  //       _hasInitialized = true;
-  //       chat.createNewConversation();
-  //     }
-  //   });
-  // }
   @override
   void dispose() {
+    _chat.removeListener(_showChatError);
     _scrollController.dispose();
     _inputController.dispose();
-
     super.dispose();
   }
-  // @override
-  // void dispose() {
-  //   _scrollController.dispose();
-  //   _inputController.dispose();
-  //   super.dispose();
-  // }
+
+  void _showChatError() {
+    final error = _chat.errorMessage;
+    if (error == _lastShownError) return;
+    _lastShownError = error;
+    if (error == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error.replaceFirst('Exception: ', ''))),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final chat = context.watch<ChatProvider>();
     final auth = context.watch<AuthProvider>();
+    final isDesktop = MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
     final showWelcome =
         !chat.isLoadingConversation &&
         chat.activeConversation != null &&
         !_hasUserMessages(chat.activeConversation);
 
-    // WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     if (chat.activeConversation?.messages.isNotEmpty ?? false) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -85,27 +88,19 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
-    final drawer = ConversationDrawer(
+    final sidebar = ConversationDrawer(
       conversations: chat.conversations,
       isLoading: chat.isLoadingConversations,
       selectedConversationId: chat.activeConversation?.id,
+      username: auth.user?['username']?.toString() ?? '',
+      email: auth.user?['email']?.toString(),
       onNewChat: () async {
+        _closeDrawer();
         await chat.createNewConversation();
-        if (!context.mounted) return;
-        if (Navigator.of(context).canPop()) Navigator.of(context).pop();
       },
-      // onSelect: (id) {
-      //   chat.selectConversation(id);
-      //   if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      // },
       onSelect: (id) async {
+        _closeDrawer();
         await chat.selectConversation(id);
-
-        if (!context.mounted) return;
-
-        if (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
       },
       onDelete: (id) async {
         await chat.deleteConversation(id);
@@ -116,14 +111,54 @@ class _ChatScreenState extends State<ChatScreen> {
       },
       onLogout: () async {
         await auth.logout();
+        chat.reset();
         if (!context.mounted) return;
         Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
       },
     );
 
-    // return Scaffold(
-    //   backgroundColor: AppTheme.deepBackground,
-    //   appBar: AppBar(
+    final main = Column(
+      children: [
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 380),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) =>
+                FadeTransition(opacity: animation, child: child),
+            child: showWelcome
+                ? _WelcomeView(
+                    key: const ValueKey('welcome'),
+                    controller: _inputController,
+                    chat: chat,
+                    username: auth.user?['username']?.toString() ?? 'there',
+                    onSend: () => _sendMessage(chat),
+                  )
+                : _ConversationView(
+                    key: const ValueKey('conversation'),
+                    controller: _scrollController,
+                    chat: chat,
+                  ),
+          ),
+        ),
+        if (!showWelcome)
+          ChatInputBar(
+            controller: _inputController,
+            isStreaming: chat.isStreaming,
+            onChanged: chat.setDraft,
+            onSend: () => _sendMessage(chat),
+            onStop: chat.stopStreaming,
+            attachments: chat.pendingAttachments,
+            onAddFiles: chat.addAttachments,
+            onRemoveAttachment: chat.removeAttachment,
+            thinkLonger: chat.thinkLonger,
+            onThinkLongerChanged: chat.setThinkLonger,
+            responseStyle: chat.responseStyle,
+            onResponseStyleChanged: chat.setResponseStyle,
+          ),
+      ],
+    );
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -132,98 +167,95 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       },
       child: Scaffold(
-        backgroundColor: AppTheme.deepBackground,
-        appBar: AppBar(
-          toolbarHeight: 68,
-          title: const _BrandTitle(),
-          // actions: [
-          //   Builder(
-          //     builder: (context) => IconButton(
-          //       tooltip: 'Conversations',
-          //       onPressed: () => Scaffold.of(context).openDrawer(),
-          //       icon: const Icon(Icons.menu_rounded),
-          //     ),
-          //   ),
-          //   const SizedBox(width: 8),
-          // ],
-        ),
-        drawer: drawer,
-        body: SafeArea(
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFF8FAFC), Color(0xFFEEF4FF)],
+        key: _scaffoldKey,
+        backgroundColor: AppTheme.background,
+        appBar: isDesktop
+            ? null
+            : AppBar(
+                backgroundColor: AppTheme.background,
+                toolbarHeight: 60,
+                centerTitle: true,
+                leading: IconButton(
+                  tooltip: 'Conversations',
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                  icon: const Icon(Icons.menu_rounded),
+                ),
+                title: Text('Nova', style: AppTheme.display(17)),
+                actions: [
+                  IconButton(
+                    tooltip: 'New chat',
+                    onPressed: chat.createNewConversation,
+                    icon: const Icon(Icons.edit_square, size: 21),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                shape: const Border(
+                  bottom: BorderSide(color: Color(0xFF0E2A31)),
+                ),
               ),
-            ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isDesktop = constraints.maxWidth >= 1050;
-                return Row(
-                  children: [
-                    if (isDesktop)
-                      SizedBox(
+        drawer: isDesktop ? null : Drawer(width: 300, child: sidebar),
+        body: AuroraBackground(
+          child: SafeArea(
+            child: isDesktop
+                ? Row(
+                    children: [
+                      Container(
                         width: 280,
-                        child: _DesktopSidebar(child: drawer),
-                      ),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 380),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              transitionBuilder: (child, animation) =>
-                                  FadeTransition(
-                                    opacity: animation,
-                                    child: child,
-                                  ),
-                              child: showWelcome
-                                  ? _WelcomeView(
-                                      key: const ValueKey('welcome'),
-                                      controller: _inputController,
-                                      chat: chat,
-                                      onSend: () => _sendMessage(chat),
-                                    )
-                                  : _ConversationView(
-                                      key: const ValueKey('conversation'),
-                                      controller: _scrollController,
-                                      chat: chat,
-                                    ),
-                            ),
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            right: BorderSide(color: AppTheme.border),
                           ),
-                          if (!showWelcome)
-                            ChatInputBar(
-                              controller: _inputController,
-                              isStreaming: chat.isStreaming,
-                              onChanged: chat.setDraft,
-                              onSend: () => _sendMessage(chat),
-                            ),
-                        ],
+                        ),
+                        child: sidebar,
                       ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                      Expanded(child: _dropZone(chat, main)),
+                    ],
+                  )
+                : _dropZone(chat, main),
           ),
         ),
       ),
     );
   }
 
-  // Future<void> _sendMessage(ChatProvider chat) async {
-  //   if (_inputController.text.trim().isEmpty) return;
-  //   chat.setDraft(_inputController.text);
-  //   _inputController.clear();
-  //   await chat.sendMessage();
-  // }
+  /// Lets users drag files from their computer onto the chat (desktop / web).
+  Widget _dropZone(ChatProvider chat, Widget child) {
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dragging = true),
+      onDragExited: (_) => setState(() => _dragging = false),
+      onDragDone: (details) async {
+        setState(() => _dragging = false);
+        final files = <({String name, Uint8List bytes})>[];
+        for (final item in details.files) {
+          if (item is DropItemDirectory) continue;
+          files.add((name: item.name, bytes: await item.readAsBytes()));
+        }
+        if (files.isNotEmpty) await chat.addAttachments(files);
+      },
+      // StackFit.expand: the chat must keep filling the whole area; a loose
+      // Stack would shrink it and push the composer off-centre.
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          child,
+          if (_dragging) const Positioned.fill(child: _DropOverlay()),
+        ],
+      ),
+    );
+  }
+
+  void _closeDrawer() {
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold?.isDrawerOpen ?? false) scaffold!.closeDrawer();
+  }
+
   Future<void> _sendMessage(ChatProvider chat) async {
     final text = _inputController.text.trim();
+    final hasFiles = chat.pendingAttachments.any((a) => a.isReady);
 
-    if (text.isEmpty || chat.isStreaming) return;
+    if ((text.isEmpty && !hasFiles) || chat.isStreaming || chat.isUploading) {
+      return;
+    }
 
     _inputController.clear();
 
@@ -245,199 +277,161 @@ class _ChatScreenState extends State<ChatScreen> {
       conversation?.messages.any((message) => message.role == 'user') ?? false;
 }
 
-class _BrandTitle extends StatelessWidget {
-  const _BrandTitle();
-
-  @override
-  Widget build(BuildContext context) {
-    final showSubtitle = MediaQuery.of(context).size.width > 360;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.asset(
-            'assets/images/nova_logo.png',
-            width: 34,
-            height: 34,
-            fit: BoxFit.cover,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Nova AI',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
-            if (showSubtitle) ...[
-              const SizedBox(height: 1),
-              const Text(
-                'Powered by Groq',
-                style: TextStyle(fontSize: 11, color: AppTheme.mutedText),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-// class _BrandTitle extends StatelessWidget {
-//   const _BrandTitle();
-
-//   @override
-//   Widget build(BuildContext context) => Row(
-//     mainAxisSize: MainAxisSize.min,
-//     children: [
-//       ClipRRect(
-//         borderRadius: BorderRadius.circular(8),
-//         child: Image.asset(
-//           'assets/images/nova_logo.png',
-//           width: 34,
-//           height: 34,
-//           fit: BoxFit.cover,
-//         ),
-//       ),
-//       const SizedBox(width: 10),
-//       const Column(
-//         crossAxisAlignment: CrossAxisAlignment.start,
-//         mainAxisSize: MainAxisSize.min,
-//         children: [
-//           Text(
-//             'Nova AI',
-//             style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-//           ),
-//           SizedBox(height: 1),
-//           Text(
-//             'Powered by Groq',
-//             style: TextStyle(fontSize: 11, color: AppTheme.mutedText),
-//           ),
-//         ],
-//       ),
-//     ],
-//   );
-// }
-//       DecoratedBox(
-//         decoration: BoxDecoration(
-//           gradient: LinearGradient(
-//             colors: [Color(0xFF6576E8), Color(0xFF9A83DD)],
-//           ),
-//           shape: BoxShape.circle,
-//         ),
-//         child: SizedBox(
-//           width: 30,
-//           height: 30,
-//           child: Icon(
-//             Icons.auto_awesome_rounded,
-//             color: Colors.white,
-//             size: 16,
-//           ),
-//         ),
-//       ),
-//       SizedBox(width: 10),
-//       Column(
-//         crossAxisAlignment: CrossAxisAlignment.start,
-//         mainAxisSize: MainAxisSize.min,
-//         children: [
-//           Text(
-//             'Nova AI',
-//             style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-//           ),
-//           SizedBox(height: 1),
-//           Text(
-//             'Powered by Groq',
-//             style: TextStyle(fontSize: 11, color: AppTheme.mutedText),
-//           ),
-//         ],
-//       ),
-//     ],
-//   );
-// }
-
-class _DesktopSidebar extends StatelessWidget {
-  final Widget child;
-  const _DesktopSidebar({required this.child});
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
-      border: Border(right: BorderSide(color: AppTheme.border)),
-    ),
-    child: child,
-  );
-}
-
 class _WelcomeView extends StatelessWidget {
   final TextEditingController controller;
   final ChatProvider chat;
+  final String username;
   final VoidCallback onSend;
 
   const _WelcomeView({
     super.key,
     required this.controller,
     required this.chat,
+    required this.username,
     required this.onSend,
   });
 
+  static const _suggestions = [
+    (
+      Icons.map_outlined,
+      'Plan a trip',
+      'Routes, stays and a packing list',
+      'Plan a relaxed 3-day weekend trip with a budget, places to stay and a packing list.',
+    ),
+    (
+      Icons.code_rounded,
+      'Write code',
+      'Flutter, Python or Django',
+      'Write clean, well-commented Flutter code for a login screen with validation.',
+    ),
+    (
+      Icons.lightbulb_outline_rounded,
+      'Explain a concept',
+      'Clear, practical, step by step',
+      'Explain how JWT access and refresh tokens work, step by step.',
+    ),
+  ];
+
+  String get _greeting {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final username =
-        context.read<AuthProvider>().user?['username']?.toString() ?? 'there';
+    final width = MediaQuery.sizeOf(context).width;
+    final titleSize = width < 400 ? 30.0 : (width < 700 ? 36.0 : 44.0);
+
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          constraints.maxWidth < 380 ? 14 : 24,
-          constraints.maxHeight > 680 ? 48 : 28,
-          constraints.maxWidth < 380 ? 14 : 24,
-          36,
+        padding: EdgeInsets.symmetric(
+          horizontal: width < 400 ? 16 : 24,
+          vertical: 24,
         ),
-        // padding: EdgeInsets.fromLTRB(
-        //   24,
-        //   constraints.maxHeight > 680 ? 48 : 28,
-        //   24,
-        //   36,
-        // ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1120),
-            child: Column(
-              children: [
-                _Greeting(username: username),
-                const SizedBox(height: 32),
-                ConstrainedBox(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight - 48),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              RiseIn(
+                delay: const Duration(milliseconds: 100),
+                child: Column(
+                  children: [
+                    const Floating(child: NovaLogo(size: 68, glow: true)),
+                    const SizedBox(height: 22),
+                    Text(
+                      '$_greeting, $username',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.display(titleSize),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Ask anything. The lights are on.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 17, color: AppTheme.muted),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 34),
+              RiseIn(
+                delay: const Duration(milliseconds: 300),
+                child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 760),
                   child: ChatInputBar(
                     controller: controller,
                     isStreaming: chat.isStreaming,
                     onChanged: chat.setDraft,
                     onSend: onSend,
+                    onStop: chat.stopStreaming,
+                    attachments: chat.pendingAttachments,
+                    onAddFiles: chat.addAttachments,
+                    onRemoveAttachment: chat.removeAttachment,
+                    thinkLonger: chat.thinkLonger,
+                    onThinkLongerChanged: chat.setThinkLonger,
+                    responseStyle: chat.responseStyle,
+                    onResponseStyleChanged: chat.setResponseStyle,
                     compact: true,
                   ),
                 ),
-                const SizedBox(height: 38),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Explore ideas',
-                    style: TextStyle(
-                      color: AppTheme.mutedText,
-                      fontWeight: FontWeight.w600,
-                    ),
+              ),
+              const SizedBox(height: 22),
+              RiseIn(
+                delay: const Duration(milliseconds: 500),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 760),
+                  child: LayoutBuilder(
+                    builder: (context, box) {
+                      final cards = [
+                        for (final s in _suggestions)
+                          _SuggestionCard(
+                            icon: s.$1,
+                            title: s.$2,
+                            subtitle: s.$3,
+                            onTap: () {
+                              controller.text = s.$4;
+                              controller.selection = TextSelection.collapsed(
+                                offset: s.$4.length,
+                              );
+                              chat.setDraft(s.$4);
+                            },
+                          ),
+                      ];
+                      if (box.maxWidth < 640) {
+                        return Column(
+                          children: [
+                            for (final card in cards) ...[
+                              card,
+                              if (card != cards.last)
+                                const SizedBox(height: 10),
+                            ],
+                          ],
+                        );
+                      }
+                      return IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final card in cards) ...[
+                              Expanded(child: card),
+                              if (card != cards.last) const SizedBox(width: 12),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(height: 14),
-                _SuggestionGrid(
-                  onSelected: (prompt) {
-                    controller.text = prompt;
-                    chat.setDraft(prompt);
-                  },
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'Nova can make mistakes. Check important information.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.muted, fontSize: 12.5),
+              ),
+            ],
           ),
         ),
       ),
@@ -445,116 +439,66 @@ class _WelcomeView extends StatelessWidget {
   }
 }
 
-class _Greeting extends StatelessWidget {
-  final String username;
-  const _Greeting({required this.username});
+class _SuggestionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _SuggestionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final fontSize = width < 380
-        ? 22.0
-        : width < 600
-        ? 26.0
-        : 30.0;
-    final hour = DateTime.now().hour;
-    final greeting = hour < 12
-        ? 'Good Morning'
-        : hour < 18
-        ? 'Good Afternoon'
-        : 'Good Evening';
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 600),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, child) => Opacity(
-        opacity: value,
-        child: Transform.translate(
-          offset: Offset(0, 12 * (1 - value)),
-          child: child,
+  Widget build(BuildContext context) => HoverLift(
+    child: Material(
+      color: AppTheme.surface.withValues(alpha: 0.85),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 20, color: AppTheme.accentText),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.text,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      child: Column(
-        children: [
-          ShaderMask(
-            blendMode: BlendMode.srcIn,
-            shaderCallback: (bounds) => const LinearGradient(
-              colors: [Color(0xFF6075DE), Color(0xFF9A7DDB)],
-            ).createShader(bounds),
-            child: Text(
-              '$greeting, $username',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: fontSize,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.6,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'How can I help you today?',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(color: AppTheme.mutedText),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }
-
-// class _Greeting extends StatelessWidget {
-//   final String username;
-//   const _Greeting({required this.username});
-
-//   @override
-//   Widget build(BuildContext context) {
-//     final hour = DateTime.now().hour;
-//     final greeting = hour < 12
-//         ? 'Good Morning'
-//         : hour < 18
-//         ? 'Good Afternoon'
-//         : 'Good Evening';
-//     return TweenAnimationBuilder<double>(
-//       tween: Tween(begin: 0, end: 1),
-//       duration: const Duration(milliseconds: 600),
-//       curve: Curves.easeOutCubic,
-//       builder: (context, value, child) => Opacity(
-//         opacity: value,
-//         child: Transform.translate(
-//           offset: Offset(0, 12 * (1 - value)),
-//           child: child,
-//         ),
-//       ),
-//       child: Column(
-//         children: [
-//           ShaderMask(
-//             blendMode: BlendMode.srcIn,
-//             shaderCallback: (bounds) => const LinearGradient(
-//               colors: [Color(0xFF6075DE), Color(0xFF9A7DDB)],
-//             ).createShader(bounds),
-//             child: Text(
-//               '$greeting, $username',
-//               textAlign: TextAlign.center,
-//               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-//                 fontWeight: FontWeight.w700,
-//                 letterSpacing: -1.1,
-//               ),
-//             ),
-//           ),
-//           const SizedBox(height: 10),
-//           Text(
-//             'How can I help you today?',
-//             style: Theme.of(
-//               context,
-//             ).textTheme.titleMedium?.copyWith(color: AppTheme.mutedText),
-//           ),
-//         ],
-//       ),
-//     );
-//   }
-// }
 
 class _ConversationView extends StatelessWidget {
   final ScrollController controller;
@@ -565,271 +509,77 @@ class _ConversationView extends StatelessWidget {
     required this.chat,
   });
 
-  @override
-  Widget build(BuildContext context) => ListView.builder(
-    controller: controller,
-    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-    itemCount:
-        (chat.activeConversation?.messages.length ?? 0) +
-        (chat.showTypingIndicator ? 1 : 0),
-    itemBuilder: (context, index) {
-      final messages = chat.activeConversation?.messages ?? const [];
-      if (chat.showTypingIndicator && index == messages.length) {
-        return const _ThinkingIndicator();
-      }
-      final message = messages[index];
-      return MessageBubble(
-        message: message,
-        isStreaming:
-            chat.isStreaming &&
-            message.role == 'assistant' &&
-            message.content.isEmpty,
-      );
-    },
-  );
-}
-
-class _ThinkingIndicator extends StatelessWidget {
-  const _ThinkingIndicator();
-  @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-    child: Row(
-      children: [
-        SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppTheme.accent,
-          ),
-        ),
-        SizedBox(width: 12),
-        Text('Nova is thinking…', style: TextStyle(color: AppTheme.mutedText)),
-      ],
-    ),
-  );
-}
-
-class _SuggestionGrid extends StatelessWidget {
-  final ValueChanged<String> onSelected;
-  const _SuggestionGrid({required this.onSelected});
+  /// Only freshly sent/streamed messages animate in; loaded history appears
+  /// instantly so scrolling back doesn't replay animations.
+  static bool _isFresh(ChatMessage message) =>
+      DateTime.now().difference(message.createdAt).inSeconds.abs() < 10;
 
   @override
   Widget build(BuildContext context) {
-    const suggestions = [
-      (
-        '🚀',
-        'Plan a Launch',
-        'Shape a roadmap with clear milestones.',
-        'Plan a launch strategy for my product with milestones and risks.',
-        Color(0xFF7F5AF0),
-        Color(0xFF22D3EE),
+    final messages = chat.activeConversation?.messages ?? const [];
+    final width = MediaQuery.sizeOf(context).width;
+    return ListView.builder(
+      controller: controller,
+      padding: EdgeInsets.fromLTRB(
+        width < 400 ? 16 : 24,
+        20,
+        width < 400 ? 16 : 24,
+        12,
       ),
-      (
-        '💻',
-        'Generate Code',
-        'Create clean Flutter, Python or Django code.',
-        'Generate Flutter code for a polished modern dashboard.',
-        Color(0xFF3B82F6),
-        Color(0xFF06B6D4),
-      ),
-      (
-        '📝',
-        'Write Content',
-        'Create blogs, emails and articles.',
-        'Write a compelling blog post about AI productivity.',
-        Color(0xFFF97316),
-        Color(0xFFEC4899),
-      ),
-      (
-        '🧠',
-        'Brainstorm Ideas',
-        'Generate creative ideas.',
-        'Brainstorm fresh ideas for a modern AI assistant experience.',
-        Color(0xFF10B981),
-        Color(0xFF14B8A6),
-      ),
-      (
-        '📚',
-        'Explain Anything',
-        'Understand difficult concepts simply.',
-        'Explain this concept in simple, practical terms.',
-        Color(0xFF6366F1),
-        Color(0xFF8B5CF6),
-      ),
-      (
-        '🐞',
-        'Debug Code',
-        'Find and fix bugs.',
-        'Help me debug this issue and suggest a robust fix.',
-        Color(0xFFEF4444),
-        Color(0xFFF59E0B),
-      ),
-      (
-        '📊',
-        'Analyze Data',
-        'Summarize charts and datasets.',
-        'Analyze this data and summarize the key insights.',
-        Color(0xFF06B6D4),
-        Color(0xFF3B82F6),
-      ),
-      (
-        '✨',
-        'Improve Writing',
-        'Refine grammar and style.',
-        'Improve this writing for clarity, tone, and polish.',
-        Color(0xFFEC4899),
-        Color(0xFF8B5CF6),
-      ),
-    ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final count = constraints.maxWidth >= 1000
-            ? 4
-            : constraints.maxWidth >= 620
-            ? 2
-            : 1;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: suggestions.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: count,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: count == 1 ? 2.6 : 2.2,
-            // childAspectRatio: count == 1 ? 3.2 : 2.6,
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final message = messages[index];
+        final bubble = MessageBubble(
+          message: message,
+          isStreaming:
+              chat.isStreaming &&
+              message.role == 'assistant' &&
+              index == messages.length - 1,
+          // The first message is the server's canned greeting.
+          showActions: index > 0,
+        );
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: _isFresh(message)
+                ? RiseIn(key: ValueKey(message.id), offset: 12, child: bubble)
+                : bubble,
           ),
-          // return GridView.builder(
-          //   shrinkWrap: true,
-          //   physics: const NeverScrollableScrollPhysics(),
-          //   itemCount: suggestions.length,
-          //   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          //     crossAxisCount: count,
-          //     crossAxisSpacing: 20,
-          //     mainAxisSpacing: 20,
-          //     mainAxisExtent: 120,
-          //   ),
-          itemBuilder: (context, index) {
-            final item = suggestions[index];
-            return _SuggestionCard(
-              icon: item.$1,
-              title: item.$2,
-              description: item.$3,
-              colors: [item.$5, item.$6],
-              onTap: () => onSelected(item.$4),
-            );
-          },
         );
       },
     );
   }
 }
 
-class _SuggestionCard extends StatefulWidget {
-  final String icon;
-  final String title;
-  final String description;
-  final List<Color> colors;
-  final VoidCallback onTap;
-  const _SuggestionCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-    required this.colors,
-    required this.onTap,
-  });
+class _DropOverlay extends StatelessWidget {
+  const _DropOverlay();
 
   @override
-  State<_SuggestionCard> createState() => _SuggestionCardState();
-}
-
-class _SuggestionCardState extends State<_SuggestionCard> {
-  bool _hovered = false;
-  @override
-  Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) => setState(() => _hovered = true),
-    onExit: (_) => setState(() => _hovered = false),
-    child: AnimatedScale(
-      duration: const Duration(milliseconds: 200),
-      scale: _hovered ? 1.02 : 1,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        transform: Matrix4.translationValues(0, _hovered ? -5 : 0, 0),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppTheme.border),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(
-                0xFF344569,
-              ).withValues(alpha: _hovered ? .12 : .055),
-              blurRadius: _hovered ? 20 : 10,
-              offset: Offset(0, _hovered ? 10 : 5),
-            ),
-            if (_hovered)
-              BoxShadow(
-                color: widget.colors.first.withValues(alpha: .10),
-                blurRadius: 18,
-              ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: widget.onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          widget.colors.first.withValues(alpha: .16),
-                          widget.colors.last.withValues(alpha: .42),
-                        ],
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      widget.icon,
-                      style: const TextStyle(fontSize: 19),
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    widget.title,
-                    style: const TextStyle(
-                      color: AppTheme.primaryText,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    widget.description,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.mutedText,
-                      fontSize: 12.5,
-                      height: 1.25,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+  Widget build(BuildContext context) => IgnorePointer(
+    child: Container(
+      margin: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.background.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.accent, width: 2),
+      ),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.upload_file_rounded,
+            size: 44,
+            color: AppTheme.accentText,
           ),
-        ),
+          const SizedBox(height: 14),
+          Text('Drop files to add to chat', style: AppTheme.display(20)),
+          const SizedBox(height: 6),
+          const Text(
+            'Images, PDFs, text and code files',
+            style: TextStyle(color: AppTheme.muted),
+          ),
+        ],
       ),
     ),
   );

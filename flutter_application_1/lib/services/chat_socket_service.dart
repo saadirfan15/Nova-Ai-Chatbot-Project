@@ -20,11 +20,18 @@ class ChatSocketService {
     return connect(token: token);
   }
 
-  void sendMessage({required String message, String? conversationId}) {
+  void sendMessage({
+    required String message,
+    String? conversationId,
+    List<String> attachmentIds = const [],
+    Map<String, Object> options = const {},
+  }) {
     if (_channel == null) return;
     final payload = jsonEncode({
       'message': message,
       'conversation_id': conversationId,
+      if (attachmentIds.isNotEmpty) 'attachment_ids': attachmentIds,
+      if (options.isNotEmpty) 'options': options,
     });
     _channel!.sink.add(payload);
   }

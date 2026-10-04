@@ -16,6 +16,8 @@ A modern AI-powered chatbot application built with **Flutter** and **Django REST
 - 🎨 Modern Responsive UI
 - 🔒 Secure Token Storage
 - ⚡ Fast & Lightweight Architecture
+- 🤖 Streaming AI replies via Groq (any OpenAI-compatible API)
+- 🎙️ Voice input (speech-to-text)
 
 ---
 
@@ -36,6 +38,8 @@ A modern AI-powered chatbot application built with **Flutter** and **Django REST
 - Django REST Framework
 - Django Channels
 - JWT Authentication
+- Daphne (ASGI server)
+- OpenAI Python SDK (pointed at Groq)
 - SQLite
 
 ---
@@ -63,7 +67,7 @@ Nova-AI-Chatbot-Project/
 │   │
 │   ├── manage.py
 │   ├── requirements.txt
-│   └── db.sqlite3
+│   └── .env.example
 │
 ├── flutter_application_1/
 │   ├── android/
@@ -73,7 +77,7 @@ Nova-AI-Chatbot-Project/
 │   ├── windows/
 │   ├── web/
 │   │
-│   ├── Assets/
+│   ├── assets/
 │   │   └── images/
 │   │
 │   ├── lib/
@@ -136,6 +140,12 @@ source venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
+### Configure Environment
+
+Copy `backend/.env.example` to `backend/.env` and set at least `DJANGO_SECRET_KEY`
+and `OPENAI_API_KEY` (a [Groq](https://console.groq.com/keys) key by default).
+`OPENAI_MODEL` must be a model your key can access (default `openai/gpt-oss-120b`).
+
 ### Run Migrations
 
 ```bash
@@ -150,10 +160,19 @@ python manage.py migrate
 python manage.py runserver
 ```
 
+`daphne` is installed as a Django app, so `runserver` serves both HTTP and
+WebSockets. In production run `daphne -b 0.0.0.0 -p $PORT config.asgi:application`.
+
 Backend will run at
 
 ```
 http://127.0.0.1:8000/
+```
+
+### Run Backend Tests
+
+```bash
+python manage.py test
 ```
 
 ---
@@ -172,10 +191,24 @@ Install packages
 flutter pub get
 ```
 
-Run the application
+Run the application (uses the deployed backend by default)
 
 ```bash
 flutter run
+```
+
+Run against your local backend instead
+
+```bash
+flutter run --dart-define=API_HOST=http://127.0.0.1:8000
+# Android emulator: --dart-define=API_HOST=http://10.0.2.2:8000
+```
+
+Run tests
+
+```bash
+flutter analyze
+flutter test
 ```
 
 ---
@@ -231,7 +264,6 @@ assets/screenshots/register.png
 
 # 📈 Future Improvements
 
-- AI Integration (OpenAI / Gemini)
 - Voice Chat
 - File Sharing
 - Push Notifications
